@@ -9,6 +9,8 @@ azure-storage-blob = "*"
 requests = "*"
 
 [dev-packages]
+flake8 = "*"
+pylint = "*"
 
 [requires]
 python_version = "3.9"
