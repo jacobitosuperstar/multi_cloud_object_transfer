@@ -1,7 +1,9 @@
-# Cloud transfer from S3 to Azure
-# Positional arguments give me something. What if a stranger sees the function
-# and doesn't understand what is happening??. Use them somewhere else, away
-# from my sight.
+"""Cloud transfer from S3 to Azure
+
+Positional arguments give me something. What if a stranger sees the function
+and doesn't understand what is happening??. Use them somewhere else, away
+from my sight.
+"""
 
 # python packages
 import os
@@ -11,12 +13,18 @@ import requests
 import boto3
 from botocore.exceptions import ClientError
 # Azure Blob Storage packages
+# from azure.storage.blob import BlockBlobService, PublicAccess
+# from azure.storage.blob.models import Blob
 from azure.storage.blob import (
     BlobServiceClient,
     BlobClient,
 )
-# from azure.storage.blob import BlockBlobService, PublicAccess
-# from azure.storage.blob.models import Blob
+# Local Imports
+from .utils import id_generator
+from .storage_connections import (
+    get_s3_client,
+    get_azure_blob_client,
+)
 
 
 def s3_to_azure(
@@ -28,15 +36,16 @@ def s3_to_azure(
     aws_storage_bucket_name: str = os.environ.get("AWS_STORAGE_BUCKET_NAME"),
     aws_public_object: bool = False,
     aws_url_expiration_time: int = 3600,
+    aws_delete_after_transfer: bool = False,
     azure_storage_account_name: str = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME"),
     azure_storage_access_key: str = os.environ.get("AZURE_STORAGE_ACCESS_KEY"),
     azure_storage_connection_string: str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING"),
     azure_storage_blob_name: str = None,
-):
-    """This function gets a file from S3 and transfer it to Azure Storage
-    in a data stream, so no excesive memory is used beign local storage or
-    in memory storage. At the moment we don't rename dinamically the objects in
-    case they already exists in Azure, we function deletes and re-writes.
+    azure_storage_blob_overwrite: bool = False,
+) -> str:
+    """This function gets an existing file from S3 and transfer it to Azure
+    Storage in a data stream, so no excesive memory is used beign local storage
+    or in memory storage, just bandwith.
 
     params:
     aws_access_key_id: str -> AWS access key, it tries to take the one from the
@@ -57,6 +66,9 @@ def s3_to_azure(
     604800 seconds. Remmember that if the validation time expires before the
     download finishes you will only have a partial transfer.
 
+    aws_delete_after_transfer: bool -> Boolean to check if the original file
+    will be deleted or not. By default is False.
+
     For the azure authentication is needed one of there, the
     azure_storage_account_name and the azure_storage_access_key or the
     azure_storage_connection_string, to be able to connect to the azure storage
@@ -74,18 +86,22 @@ def s3_to_azure(
 
     azure_storage_blob_name: str -> The destination name, if it happends to be
     None, it will be equal to the aws_object_key.
+
+    azure_storage_blob_overwrite: bool -> If there is already a blob with the
+    azure_storage_blob_name, the original file could be re-written or and ID is
+    generated that will differentiate the names of the blobs. By default the
+    files aren't overwritten.
+
+    returns:
+    azure_storage_blob_name: str -> Returns the key of the file transfered to
+    S3
     """
     # accessing the AWS bucket
-    try:
-        aws_session = boto3.session(
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key
-        )
-    except Exception as e:
-        print(e)
-        return
-
-    s3_client = aws_session.client('s3')
+    s3_client = get_s3_client(
+        aws_access_key_id=aws_access_key_id,
+        aws_secret_access_key=aws_secret_access_key,
+        aws_storage_bucket_name=aws_storage_bucket_name,
+    )
 
     if azure_storage_blob_name is None:
         azure_storage_blob_name = aws_object_key
@@ -114,40 +130,42 @@ def s3_to_azure(
             print(e)
             return
     # accesing AzureStorage
-    if azure_storage_connection_string is not None:
-        # log on with the connection string
-        try:
-            blob_client = BlobClient.from_connection_string(
-                conn_str=azure_storage_connection_string,
-                container_name=azure_storage_container_name,
-                blob_name=azure_storage_blob_name,
-            )
-        except Exception as e:
-            print(e)
-            return
-    else:
-        # log on with the account name and the access key
-        try:
-            account_url = (
-                'https://'
-                f'{azure_storage_account_name}'
-                'blob.core.windows.net/'
-            )
-            blob_client = BlobServiceClient(
-                account_url=account_url,
-                credential=azure_storage_access_key,
-            ).get_blob_client(
-                container=azure_storage_container_name,
-                blob=azure_storage_blob_name,
-            )
-        except Exception as e:
-            print(e)
-            return
-
+    blob_client = get_azure_blob_client(
+        azure_storage_container_name=azure_storage_container_name,
+        azure_storage_blob_name=azure_storage_blob_name,
+        azure_storage_account_name=azure_storage_account_name,
+        azure_storage_access_key=azure_storage_access_key,
+        azure_storage_connection_string=azure_storage_connection_string,
+    )
     # checker and deleter existing blobs with the same name
-    if blob_client.exists:
-        blob_client.delete_blob()
-        blob_client.create_append_blob()
+    # if overwrite is true, we delete the possible coincidence and create a new
+    # blob
+    if azure_storage_blob_overwrite is True:
+        if blob_client.exists():
+            blob_client.delete_blob()
+    # if overwrite is false, we generate and ID to put on the name and we
+    # change it until the uniqueness condition is meet
+    if azure_storage_blob_overwrite is False:
+        original_name = azure_storage_blob_name
+        exists = blob_client.exists()
+        while exists is True:
+            file_name, file_extension = os.path.splitext(original_name)
+            random_id = id_generator()
+            azure_storage_blob_name = (
+                f"{file_name}"
+                "_"
+                f"{random_id}"
+                f"{file_extension}"
+            )
+            blob_client = get_azure_blob_client(
+                azure_storage_container_name=azure_storage_container_name,
+                azure_storage_blob_name=azure_storage_blob_name,
+                azure_storage_account_name=azure_storage_account_name,
+                azure_storage_access_key=azure_storage_access_key,
+                azure_storage_connection_string=azure_storage_connection_string,
+            )
+            exists = blob_client.exists()
+    blob_client.create_append_blob()
 
     # creating the request for the requests package
     object_stream = requests.get(object_url, stream=True)
@@ -155,6 +173,25 @@ def s3_to_azure(
         stream.raise_for_status()
         for chunk in stream.iter_content(chunck_size=1024):
             blob_client.append_block(chunk)
-    return print(
+    print(
         f"Finalized process for {azure_storage_blob_name}"
     )
+    return azure_storage_blob_name
+
+
+def azure_to_s3(
+    *,
+    azure_storage_container_name: str,
+    azure_storage_blob_name: str = None,
+    azure_storage_account_name: str = os.environ.get("AZURE_STORAGE_ACCOUNT_NAME"),
+    azure_storage_access_key: str = os.environ.get("AZURE_STORAGE_ACCESS_KEY"),
+    azure_storage_connection_string: str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING"),
+    azure_storage_delete_after_transfer: bool = False,
+    aws_access_key_id: str = os.environ.get("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key: str = os.environ.get("AWS_SECRET_ACCESS_KEY"),
+    aws_storage_bucket_name: str = os.environ.get("AWS_STORAGE_BUCKET_NAME"),
+    aws_public_object: bool = False,
+    aws_object_key: str = None,
+    aws_object_overwrite: bool = False,
+):
+    return aws_object_key
