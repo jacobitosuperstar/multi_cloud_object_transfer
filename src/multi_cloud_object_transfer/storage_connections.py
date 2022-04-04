@@ -76,6 +76,55 @@ def get_azure_blob_client(
     return blob_client
 
 
+def azure_url_generator(
+    sectional: str,
+    azure_storage_container_name: str,
+    azure_storage_blob_name: str,
+    # expiration_time: int = 1,
+    expiration_time: str = 30,
+) -> str:
+    """Generador de la URL del blob
+
+    entradas:
+    sectional: str -> Seccional
+    azure_storage_container_name: str -> Nombre del contenedor
+    azure_storage_blob_name: str -> Nombre del blob
+    expiration_time: int -> Tiempo de expiración en minutos, el valor por
+    default es de 30 minutos.
+
+    salidas
+    url: str -> url del blob
+    """
+    # Obteniendo las credenciales según la seccional
+    credentials = azure_credentials(sectional)
+    account_name = credentials.get("a_s_account_name")
+    account_key = credentials.get("a_s_access_key")
+    time = datetime.utcnow() + timedelta(minutes=expiration_time)
+
+    # client = BlobServiceClient()
+    # Generando el SAS KEY
+    sas_blob = generate_blob_sas(
+        account_name=account_name,
+        container_name=azure_storage_container_name,
+        blob_name=azure_storage_blob_name,
+        account_key=account_key,
+        permission=BlobSasPermissions(read=True),
+        expiry=time,
+    )
+    # Generando la URL
+    url = (
+        "https://"
+        f"{account_name}"
+        ".blob.core.windows.net/"
+        f"{azure_storage_container_name}"
+        "/"
+        f"{azure_storage_blob_name}"
+        "?"
+        f"{sas_blob}"
+    )
+    return url
+
+
 def get_s3_client(
     *,
     aws_access_key_id: str,
