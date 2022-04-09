@@ -2,6 +2,10 @@
 Modulo to connect to Azure Storage
 """
 # python packages
+from datetime import (
+    datetime,
+    timedelta,
+)
 # Third party packages
 # AWS S3 packages
 import boto3
@@ -10,6 +14,8 @@ from botocore.exceptions import ClientError
 from azure.storage.blob import (
     BlobServiceClient,
     BlobClient,
+    generate_blob_sas,
+    BlobSasPermissions,
 )
 
 
@@ -77,44 +83,46 @@ def get_azure_blob_client(
 
 
 def azure_url_generator(
-    sectional: str,
+    azure_storage_account_name: str,
+    azure_storage_account_key: str,
     azure_storage_container_name: str,
     azure_storage_blob_name: str,
-    # expiration_time: int = 1,
     expiration_time: str = 30,
 ) -> str:
-    """Generador de la URL del blob
+    """URL generator for the Azure Blob
 
-    entradas:
-    sectional: str -> Seccional
-    azure_storage_container_name: str -> Nombre del contenedor
-    azure_storage_blob_name: str -> Nombre del blob
-    expiration_time: int -> Tiempo de expiración en minutos, el valor por
-    default es de 30 minutos.
+    :type azure_storage_container_name: str
+    :param azure_storage_container_name => Name of the container
 
-    salidas
-    url: str -> url del blob
+    :type azure_storage_blob_name: str
+    :param azure_storage_blob_name => Name of the azure blob
+
+    :type expiration_time: int
+    :param expiration_time => Expiration time, the default value of the
+    parameter is 30 minutes. You can create URLS that are valid for ever, but
+    is better to have a certain ammount of time so you don't compromise your
+    information.
+
+    :type url: str
+    :return url => Blob temporal url
     """
-    # Obteniendo las credenciales según la seccional
-    credentials = azure_credentials(sectional)
-    account_name = credentials.get("a_s_account_name")
-    account_key = credentials.get("a_s_access_key")
+    # Getting the duration time of the SAS Key
     time = datetime.utcnow() + timedelta(minutes=expiration_time)
 
-    # client = BlobServiceClient()
-    # Generando el SAS KEY
+    # Generating SAS KEYS
     sas_blob = generate_blob_sas(
-        account_name=account_name,
+        account_name=azure_storage_account_name,
+        account_key=azure_storage_account_key,
         container_name=azure_storage_container_name,
         blob_name=azure_storage_blob_name,
-        account_key=account_key,
         permission=BlobSasPermissions(read=True),
         expiry=time,
     )
-    # Generando la URL
+
+    # Generating the URL
     url = (
         "https://"
-        f"{account_name}"
+        f"{azure_storage_account_name}"
         ".blob.core.windows.net/"
         f"{azure_storage_container_name}"
         "/"
